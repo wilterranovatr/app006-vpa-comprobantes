@@ -11,7 +11,7 @@ import multiprocessing
 import glob
 import time as t
 from tkinter import messagebox
-import warnings
+import requests
 
 class EmailAttachment:
     # Fecha actual
@@ -55,20 +55,79 @@ class EmailAttachment:
         #print(messages)
         #messages = messages.Restrict(f"[SenderEmailAddress] = '{email}'")
         messages = messages.Restrict(f"[SenderEmailAddress] = '{email}' Or [Subject] = 'COMPROBANTES REENVIADOS | {ruc}'")
-        #messages = messages.Restrict(f"[Subject] = 'COMPROBANTES REENVIADOS | {ruc}'")
         messages = messages.Restrict("[ReceivedTime] >= '" + received_de + "' AND [ReceivedTime] <= '"+received_ha+"'")
-        print("--- TOTAL COMPROBANTES ENCONTRADOR",len(messages))
-        folio = 1
-        for message in messages:
-            attachments = message.Attachments
-            # Save attachments
-            for attachment in attachments:
-                attachment_file_name = str(attachment)
-                for f in find:
-                    if attachment_file_name.find(f) != -1 and attachment_file_name.find(".pdf") != -1:
-                        nom_file_final = str(folio)+"_"+attachment_file_name
-                        folio = folio + 1
-                        attachment.SaveAsFile(output_dir / nom_file_final)
+        #
+        if provider == "agroindustria_santa_maria":
+            #messages = messages.Restrict(f"[Body] LIKE '%{provider}%'")
+            messages = messages.Restrict(f"@SQL=""urn:schemas:httpmail:textdescription"" like '%AGROINDUSTRIA SANTA MARIA%'")
+            folio = 1
+            ## Factura
+            message_factura = messages.Restrict(f"@SQL=""urn:schemas:httpmail:textdescription"" like '%Tipo de documento: Factura%'")
+            folio_temp =self.download_attachment_2(messages=message_factura,folio_i=folio,output_dir=output_dir,ruc=ruc,tipo="01")
+            ## Nota de Crédito
+            message_nc = messages.Restrict(f"@SQL=""urn:schemas:httpmail:textdescription"" like '%Tipo de documento: Nota de C%'")
+            folio_temp_2=self.download_attachment_2(messages=message_nc,folio_i=folio_temp,output_dir=output_dir,ruc=ruc,tipo="07")
+            ## Comprobantes
+            message_perc = messages.Restrict(f"@SQL=""urn:schemas:httpmail:textdescription"" like '%comprobante de percepción%'")
+            folio_temp_3=self.download_attachment_2(messages=message_perc,folio_i=folio_temp_2,output_dir=output_dir,ruc=ruc,tipo="40")
+        elif provider == "perufarma":
+            #messages = messages.Restrict(f"[Body] LIKE '%{provider}%'")
+            messages = messages.Restrict(f"@SQL=""urn:schemas:httpmail:textdescription"" like '%PERUFARMA%'")
+            folio = 1
+            ## Factura
+            message_factura = messages.Restrict(f"@SQL=""urn:schemas:httpmail:textdescription"" like '%Factura%'")
+            folio_temp =self.download_attachment_2(messages=message_factura,folio_i=folio,output_dir=output_dir,ruc=ruc,tipo="01")
+            ## Nota de Crédito
+            message_nc = messages.Restrict(f"@SQL=""urn:schemas:httpmail:textdescription"" like '%Nota de Credito%'")
+            folio_temp_2=self.download_attachment_2(messages=message_nc,folio_i=folio_temp,output_dir=output_dir,ruc=ruc,tipo="07")
+            ## Comprobantes
+            message_rem = messages.Restrict(f"@SQL=""urn:schemas:httpmail:textdescription"" like '%Guía de remisión%'")
+            folio_temp_3=self.download_attachment_2(messages=message_rem,folio_i=folio_temp_2,output_dir=output_dir,ruc=ruc,tipo="09")
+        else:  
+            #
+            #messages = messages.Restrict(f"[Subject] = 'COMPROBANTES REENVIADOS | {ruc}'")
+            print("--- TOTAL COMPROBANTES ENCONTRADOR",len(messages))
+            folio = 1
+            for message in messages:
+                attachments = message.Attachments
+                # Save attachments
+                for attachment in attachments:
+                    attachment_file_name = str(attachment)
+                    for f in find:
+                        if attachment_file_name.find(f) != -1 and attachment_file_name.find(".pdf") != -1:
+                            nom_file_final = str(folio)+"_"+attachment_file_name
+                            folio = folio + 1
+                            attachment.SaveAsFile(output_dir / nom_file_final)
+    def download_attachment_2(self,messages,folio_i,output_dir,ruc,tipo):
+        folio = folio_i
+        messages_temp = []
+        names_files = []
+        for msg in messages:
+            temp_msg = msg.Body.splitlines()
+            messages_temp.append([linea for linea in temp_msg if 'PDF' in linea])
+            names_files.append([linea for linea in temp_msg if ('Serie y número' in linea or 'Número de Comprobante' in linea)])
+
+        if ruc == "20100052050": ## Perufarma
+            messages = list(map(lambda x: x[0].split("<")[1].split(">")[0],messages_temp))
+            names = list(map(lambda x: x[0].split(" ")[-2].split("\t")[1] if x[0].split(" ")[-2].split("\t")[0] == "" else x[0].split(" ")[-2].split("\t")[0],names_files))
+            print(len(messages))
+            print(len(names))
+        else:
+            names = list(map(lambda x: x[0].split(" ")[-2].split("\t")[0] if x[0].split(" ")[-1] == "" else x[0].split(" ")[-1],names_files))
+            messages = list(map(lambda x: x[0].split("<")[-1].split(">")[0],messages_temp))
+        #
+        for m in range(len(messages)):
+            respuesta = requests.get(messages[m], stream=True)
+            # Aisla el nombre del archivo PDF de la URL
+            nombre_archivo = f"{folio}_{ruc}-{tipo}_{names[m]}.pdf"
+            folio = folio +1
+            if respuesta.status_code == 200:
+                # Guarda en la carpeta especificada
+                ruta_archivo = os.path.join(output_dir, nombre_archivo)
+                with open(ruta_archivo, 'wb') as archivo_pdf:
+                    archivo_pdf.write(respuesta.content)
+        return folio
+
     #region  Main
     def startProccessETL(self,provider, fec_ini = None,fec_fin = None):
         self.data=[]
