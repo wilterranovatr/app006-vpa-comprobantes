@@ -77,7 +77,8 @@ class FormMenu:
         self.form_proceso.grab_set()
         ##
         form2_label = ttk.Label(self.form_proceso,text="--Seleccione un proveedor--")
-        self.form2_combo = ttk.Combobox(self.form_proceso,width=33,values=["ALICORP","FRUTOS Y ESPECIAS","P&D ANDINA ALIMENTOS","CASA GRANDE","AGROINDUSTRIA SANTA MARIA","PERUFARMA","LECHE GLORIA","MOLITALIA","KIMBERLY - CLARK PERU"],style="secondary")
+        #self.form2_combo = ttk.Combobox(self.form_proceso,width=33,values=["ALICORP","FRUTOS Y ESPECIAS","P&D ANDINA ALIMENTOS","CASA GRANDE","AGROINDUSTRIA SANTA MARIA","PERUFARMA","LECHE GLORIA","MOLITALIA","KIMBERLY - CLARK PERU"],style="secondary")
+        self.form2_combo = ttk.Combobox(self.form_proceso,width=33,values=["ALICORP","MOLITALIA"],style="secondary")
         form2_label2 = ttk.Label(self.form_proceso,text="-- Fecha Inicio --")
         self.form2_combo2 = widgets.DateEntry(self.form_proceso,width=30,bootstyle="secondary")
         form2_label3 = ttk.Label(self.form_proceso,text="-- Fecha Fin --")
@@ -146,5 +147,5 @@ class FormMenu:
             
     def VerCarpetaComprobantes(self):
         path_appdata=os.getenv('APPDATA')
-        output_dir = f'{path_appdata}/Comprobantes Terranova/'
+        output_dir = f'{path_appdata}/Comprobantes Terranova/PDF/'
         os.startfile(output_dir)

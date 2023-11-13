@@ -3,54 +3,12 @@
         "correo": "dte_20100055237@paperless.pe",
         "razon_social":"ALICORP SAA",
         "ruc":"20100055237",
-        "comprobantes":["01","07","08","040"]
-    },
-    "frutos_especias":{
-        "correo": "felectronica@frutosyespecias.com.pe",
-        "razon_social":"FRUTOS Y ESPECIAS S.A.C.",
-        "ruc":"20207845044",
-        "comprobantes":["01","09","07"]
-    },
-    "p_d_andina_alimentos":{
-        "correo": "facturacionelectronica@pdandina.com.pe",
-        "razon_social":"P&D ANDINA ALIMENTOS S.A",
-        "ruc":"20205922149",
-        "comprobantes":["01","07"]
-    },
-    "casa_grande":{
-        "correo": "de_20131823020@azucarperu.com.pe",
-        "razon_social":"CASA GRANDE SOCIEDAD ANONIMA ABIERTA",
-        "ruc":"20131823020",
-        "comprobantes":["01","07"]
-    },
-    "agroindustria_santa_maria":{
-        "correo": "comprobantes@efacturacion.pe",
-        "razon_social":"AGROINDUSTRIA SANTA MARIA S.A.C.",
-        "ruc":"20100166144",
-        "comprobantes":["01","07","40"]
-    },
-    "perufarma":{
-        "correo": "comprobantes@efacturacion.pe",
-        "razon_social":"PERUFARMA S A",
-        "ruc":"20100052050",
-        "comprobantes":["01","09","07"]
-    },
-    "leche_gloria":{
-        "correo": "de_20100190797@gloria.com.pe",
-        "razon_social":"LECHE GLORIA SOCIEDAD ANONIMA - GLORIA S.A.",
-        "ruc":"20100190797",
-        "comprobantes":["01","09","07","08"]
+        "comprobantes":["07"]
     },
     "molitalia":{
         "correo": "dte_20100035121@paperless.pe",
         "razon_social":"MOLITALIA S.A",
         "ruc":"20100035121",
-        "comprobantes":["01","07"]
-    },
-    "kimberly_clark_peru":{
-        "correo": "dte_20100152941@paperless.pe",
-        "razon_social":"KIMBERLY-CLARK PERU S.R.L.",
-        "ruc":"20100152941",
-        "comprobantes":["01","07","08"]
+        "comprobantes":["07"]
     }
 }

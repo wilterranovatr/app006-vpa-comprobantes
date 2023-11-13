@@ -24,7 +24,8 @@ class ListaReportes:
     tabla=None
     
     #Lista Proveedores
-    list_proveedores=["Todos","Alicorp","Frutos y Especias S.A.C.","P&D Andina Alimentos S.A.C.","Casa Grande S.A.A.","Agroindustria Santa María S.A.C.","Perufarma S.A.","Leche Gloria S.A.","Molitalia S.A.","Kimberly-Clark Peru S.R.L."]
+    #list_proveedores=["Todos","Alicorp","Frutos y Especias S.A.C.","P&D Andina Alimentos S.A.C.","Casa Grande S.A.A.","Agroindustria Santa María S.A.C.","Perufarma S.A.","Leche Gloria S.A.","Molitalia S.A.","Kimberly-Clark Peru S.R.L."]
+    list_proveedores=["Todos","Alicorp","Molitalia S.A."]
 
     def __init__(self,contenedor,callback = None):
         ##

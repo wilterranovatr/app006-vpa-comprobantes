@@ -6,12 +6,12 @@ import json
 import pandas as pd
 import openpyxl
 import shutil
-import tabula
 import multiprocessing
 import glob
 import time as t
 from tkinter import messagebox
 import warnings
+import xml.etree.ElementTree as ET
 
 class EmailAttachment:
     # Fecha actual
@@ -33,13 +33,21 @@ class EmailAttachment:
         # Create output folder
         path_appdata=os.getenv('APPDATA')
         nom_folder = fec_fin.strftime("%d-%m-%Y")
-        output_dir = Path(f'{path_appdata}/Comprobantes Terranova/{provider}/{nom_folder.split("-")[2]}{nom_folder.split("-")[1]}{nom_folder.split("-")[0]}')
+        output_dir = Path(f'{path_appdata}/Comprobantes Terranova/XML/{provider}/{nom_folder.split("-")[2]}{nom_folder.split("-")[1]}{nom_folder.split("-")[0]}')
+        output_dir_pdf = Path(f'{path_appdata}/Comprobantes Terranova/PDF/{provider}/{nom_folder.split("-")[2]}{nom_folder.split("-")[1]}{nom_folder.split("-")[0]}')
         if not output_dir.is_dir():
             os.makedirs(output_dir)
         else:
             shutil.rmtree(output_dir)
             t.sleep(2)
             os.makedirs(output_dir)
+            
+        if not output_dir_pdf.is_dir():
+            os.makedirs(output_dir_pdf)
+        else:
+            shutil.rmtree(output_dir_pdf)
+            t.sleep(2)
+            os.makedirs(output_dir_pdf)
         
         # Connect to outlook application
         outlook = win32com.client.Dispatch("Outlook.Application").GetNamespace("MAPI")
@@ -65,10 +73,13 @@ class EmailAttachment:
             for attachment in attachments:
                 attachment_file_name = str(attachment)
                 for f in find:
+                    folio = folio + 1
+                    if attachment_file_name.find(f) != -1 and attachment_file_name.find(".xml") != -1:
+                        nom_file_final = str(folio)+"_"+attachment_file_name
+                        attachment.SaveAsFile(output_dir / nom_file_final)
                     if attachment_file_name.find(f) != -1 and attachment_file_name.find(".pdf") != -1:
                         nom_file_final = str(folio)+"_"+attachment_file_name
-                        folio = folio + 1
-                        attachment.SaveAsFile(output_dir / nom_file_final)
+                        attachment.SaveAsFile(output_dir_pdf / nom_file_final)
     #region  Main
     def startProccessETL(self,provider, fec_ini = None,fec_fin = None):
         self.data=[]
@@ -88,10 +99,10 @@ class EmailAttachment:
                 path_appdata=os.getenv('APPDATA')
                 nom_folder = fec_fin.strftime("%d-%m-%Y")
                 print("PROVEEDOR: ",provider)
-                output_dir = f'{path_appdata}\Comprobantes Terranova\{provider}\{nom_folder.split("-")[2]}{nom_folder.split("-")[1]}{nom_folder.split("-")[0]}'
-                files = glob.glob(f"{output_dir}\*.pdf")
+                output_dir = f'{path_appdata}/Comprobantes Terranova/XML/{provider}/{nom_folder.split("-")[2]}{nom_folder.split("-")[1]}{nom_folder.split("-")[0]}'
+                files = glob.glob(f"{output_dir}\*.xml")
                 #
-                self.data.append(pool.map(self.ReadDataPdf,files))
+                self.data.append(pool.map(self.ReadDataXML,files))
                 #print(F"SE HA LEIDO UN TOTAL DE {len(self.data)} DOCUMENTOS.")
                 #
             except Exception as e:
@@ -131,10 +142,14 @@ class EmailAttachment:
                 sheet[f'E{row_number}'] = d["tipo_comprobante"]
                 sheet[f'F{row_number}'] = d["nro_comprobante"]
                 sheet[f'G{row_number}'] = d["fecha_emision"]
-                sheet[f'H{row_number}'] = "\n".join(d["doc_vinculado"])
-                sheet[f'I{row_number}'] = d["igv"]
-                sheet[f'J{row_number}'] = d["imp_total"]
-                sheet[f'K{row_number}'] = d["imp_percepcion"]
+                sheet[f'H{row_number}'] = d["moneda_actual"]
+                sheet[f'I{row_number}'] = "\n".join(d["doc_vinculado"])
+                sheet[f'J{row_number}'] = "\n".join(d["fecha_vinculado"])
+                sheet[f'K{row_number}'] = d["motivo"]
+                sheet[f'L{row_number}'] = d["imp_total"]
+                sheet[f'M{row_number}'] = d["descripcion"]
+                sheet[f'N{row_number}'] = d["precio_u"]
+                sheet[f'O{row_number}'] = d["item_u"]
             ####
         data_sheet.save(f"./reports/{name_report}.xlsx")
         
@@ -154,739 +169,293 @@ class EmailAttachment:
         finds = temp_finds.split(",")
         self.download_attachment(email=self.proveedor["correo"],ruc=self.proveedor["ruc"],find=finds,provider=provider,fec_ini=f_ini,fec_fin=f_fin)
     
-    def ReadDataPdf(self,rutaPDF):
+    def ReadDataXML(self,rutaxml):
+        #
         data_temp = []
+        
+        # Names spaces
+        ns = {
+            'sac':'urn:sunat:names:specification:ubl:peru:schema:xsd:SunatAggregateComponents-1',
+            'cac':'urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2',
+            'cbc':'urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2',
+        }
+        tree = ET.parse(rutaxml)
+        root = tree.getroot()
+        ###
         try:
-            if "20100055237_01" in rutaPDF:   ##Alicorp  #Factura
+            if "20100055237_01" in rutaxml:   ##Alicorp  #Factura
                 #
-                folio = str(rutaPDF.split("\\")[-1].split("_")[0])
-                nro_comprobante = str(rutaPDF.split("\\")[-1].replace(f"{folio}_20100055237_01","")).replace(".pdf","")
-                #
-                temp_nro_comprobante = nro_comprobante.split("_")[1].split("-")
-                rest = 8-len(temp_nro_comprobante[1])
-                ceros = ''.join(str("0") for val in range(rest))
-                nro_comprobante = f"{temp_nro_comprobante[0]}-{ceros}{temp_nro_comprobante[1]}"  
-                #
-                datos_generales = tabula.read_pdf(rutaPDF,pages='all',multiple_tables=True,stream=True,area=(179,28,224,583))
-                #print(datos_generales[0])
-                costos = tabula.read_pdf(rutaPDF,pages='all',multiple_tables=True,stream=True,area=(541,429,635,596))
-                #print(costos[0])
-                ##
-                df_datos= datos_generales[0]
-                df_costos = costos[0]
-                #
-                tipo_comprobante="FACTURA"
-                fecha_emision = df_datos["Unnamed: 3"][3]
-                doc_vinculado = ["-"]
-                igv = df_costos[df_costos.iloc[0].index[2]][5]
-                imp_total = df_costos[df_costos.iloc[0].index[2]][6]
-                try:
-                    percepcion = tabula.read_pdf(rutaPDF,pages='all',multiple_tables=True,stream=True,area=(577,29,642,425))
-                    #print(percepcion[0])
-                    df_percpecion = percepcion[0]
-                    imp_percepcion = df_percpecion.columns.to_numpy()[0].split(" ")[-1]
-                except:
-                    imp_percepcion = "-"
-                ##
-            elif "20100055237_07" in rutaPDF: ##Alicorp  #Nota de Credito
-                folio = str(rutaPDF.split("\\")[-1].split("_")[0])
-                nro_comprobante = str(rutaPDF.split("\\")[-1].replace(f"{folio}_20100055237_07","")).replace(".pdf","")
+                folio = str(rutaxml.split("\\")[-1].split("_")[0])
+                nro_comprobante = str(rutaxml.split("\\")[-1].replace(f"{folio}_20100055237_01","")).replace(".xml","")
                 #
                 temp_nro_comprobante = nro_comprobante.split("_")[1].split("-")
                 rest = 8-len(temp_nro_comprobante[1])
                 ceros = ''.join(str("0") for val in range(rest))
                 nro_comprobante = f"{temp_nro_comprobante[0]}-{ceros}{temp_nro_comprobante[1]}"  
                 #
-                datos_generales = tabula.read_pdf(rutaPDF,pages='all',multiple_tables=True,stream=True,area=(169,29,212,583))
-                #print(datos_generales[0])
-                datos_generales_2 = tabula.read_pdf(rutaPDF,pages='all',multiple_tables=True,stream=True,area=(215,28,532,594))
-                #print(datos_generales_2)
-                costos = tabula.read_pdf(rutaPDF,pages='all',multiple_tables=True,stream=True,area=(528,415,606,583))
-                #print(costos[0])
+                
                 ##
-                df_datos= datos_generales[0]
-                df_costos = costos[0]
-                #
+            elif "20100055237_07" in rutaxml: ##Alicorp  #Nota de Credito
+                folio = str(rutaxml.split("\\")[-1].split("_")[0])
+                nro_comprobante = root.find('cbc:ID', ns).text
                 tipo_comprobante="NOTA DE CRÉDITO"
-                fecha_emision = df_datos["Fecha de"][2]
-                #
-                doc_vinculado = []
-                for df in datos_generales_2:
-                    temp = df[df["Unnamed: 1"]=="FACTURA ELECTRONICA"][df.iloc[0].index[2]]
-                    doc_vinculado.extend(temp.values.tolist())
-                #
-                #print(doc_vinculado)#
-                igv = df_costos[df_costos.iloc[0].index[2]][4]
-                imp_total = df_costos[df_costos.iloc[0].index[2]][5]
-                imp_percepcion = "-"
+                fecha_emision = root.find('cbc:IssueDate', ns).text
+                moneda_actual = root.find('cac:TaxTotal', ns).find('cbc:TaxAmount', ns).attrib["currencyID"]
+                doc_vinculado =[]
+                fecha_vinculado=[]
+                for item in root.findall('cac:BillingReference', ns):
+                    temp = item.find('cac:InvoiceDocumentReference', ns).find('cbc:ID', ns).text
+                    temp_date = item.find('cac:InvoiceDocumentReference', ns).find('cbc:IssueDate', ns).text
+                    doc_vinculado.append(temp)
+                    fecha_vinculado.append(temp_date)
+                    
+                motivo = root.find('cac:DiscrepancyResponse', ns).find('cbc:Description', ns).text
+                imp_total = root.find('cac:LegalMonetaryTotal', ns).find('cbc:PayableAmount', ns).text
+                ##
+                count = 0
+                for item in root.findall('cac:CreditNoteLine', ns):    
+                    if count == 1:
+                        break
+                    else:    
+                        descripcion = item.find('cac:Item', ns).findall('cbc:Description', ns)[0].text.split("@@")[0]
+                        precio_u = item.find('cac:Item', ns).findall('cbc:Description', ns)[0].text.split("@@")[-1]
+                        item_u = "1"
+                        count = count +1
                 ##
                 
-            elif "20100055237_08" in rutaPDF: ##Alicorp  #Nota de Debito
-                folio = str(rutaPDF.split("\\")[-1].split("_")[0])
-                nro_comprobante = str(rutaPDF.split("\\")[-1].replace(f"{folio}_20100055237_08","")).replace(".pdf","")
+            elif "20100055237_08" in rutaxml: ##Alicorp  #Nota de Debito
+                folio = str(rutaxml.split("\\")[-1].split("_")[0])
+                nro_comprobante = str(rutaxml.split("\\")[-1].replace(f"{folio}_20100055237_08","")).replace(".xml","")
                 #
                 temp_nro_comprobante = nro_comprobante.split("_")[1].split("-")
                 rest = 8-len(temp_nro_comprobante[1])
                 ceros = ''.join(str("0") for val in range(rest))
                 nro_comprobante = f"{temp_nro_comprobante[0]}-{ceros}{temp_nro_comprobante[1]}"  
                 #
-                datos_generales = tabula.read_pdf(rutaPDF,pages='all',multiple_tables=True,stream=True,area=(168,27,213,583))
-                #print(datos_generales[0])
-                datos_generales_2 = tabula.read_pdf(rutaPDF,pages='all',multiple_tables=True,stream=True,area=(215,28,532,594))
-                #print(datos_generales_2)
-                costos = tabula.read_pdf(rutaPDF,pages='all',multiple_tables=True,stream=True,area=(529,415,608,586))
-                #print(costos[0])
+                
                 ##
-                df_datos= datos_generales[0]
-                df_costos = costos[0]
-                #
-                tipo_comprobante="NOTA DE DÉBITO"
-                fecha_emision = df_datos["Fecha de"][2]
-                #
-                doc_vinculado = []
-                for df in datos_generales_2:
-                    temp = df[df["Unnamed: 1"]=="FACTURA ELECTRONICA"][df.iloc[0].index[2]]
-                    doc_vinculado.extend(temp.values.tolist())
-                #
-                #print(doc_vinculado)#
-                igv = df_costos[df_costos.iloc[0].index[2]][4]
-                imp_total = df_costos[df_costos.iloc[0].index[2]][5]
-                imp_percepcion = "-"
-                #print(imp_total,igv)
-                ##
-            elif "20100055237_040" in rutaPDF: ##Alicorp  #Comprobante de Percepción Electrónico
-                folio = str(rutaPDF.split("\\")[-1].split("_")[0])
-                nro_comprobante = str(rutaPDF.split("\\")[-1].replace(f"{folio}_20100055237_040","")).replace(".pdf","")
+            elif "20100055237_040" in rutaxml: ##Alicorp  #Comprobante de Percepción Electrónico
+                folio = str(rutaxml.split("\\")[-1].split("_")[0])
+                nro_comprobante = str(rutaxml.split("\\")[-1].replace(f"{folio}_20100055237_040","")).replace(".xml","")
                 #
                 temp_nro_comprobante = nro_comprobante.split("_")[1].split("-")
                 rest = 8-len(temp_nro_comprobante[1])
                 ceros = ''.join(str("0") for val in range(rest))
                 nro_comprobante = f"{temp_nro_comprobante[0]}-{ceros}{temp_nro_comprobante[1]}"  
                 #
-                cabecera = tabula.read_pdf(rutaPDF,pages='all',multiple_tables=True,stream=True,area=(29,331,131,566))
-                #print(cabecera[0])
-                datos_generales = tabula.read_pdf(rutaPDF,pages='all',multiple_tables=True,stream=True,area=(206,30,761,569))
-                #print(datos_generales[0])
-                costos = tabula.read_pdf(rutaPDF,pages='all',multiple_tables=True,stream=True,area=(764,305,794,562))
-                #print(costos[0])
                 ##
-                df_cabecera= cabecera[0]
-                df_costos = costos[0]
-                #
-                tipo_comprobante="COMPROBANTE DE PERCEPCIÓN E."
-                fecha_emision = str(df_cabecera["R.U.C. 20100055237"][3]).split(":")[1]
-                #print(fecha_emision)
-                #
-                doc_vinculado = []
-                for df in datos_generales:
-                    temp = df[df["Unnamed: 0"]=="FACTURA"]["Unnamed: 1"]
-                    doc_vinculado.extend(temp.values.tolist())
-                #
-                #print(doc_vinculado)#
-                igv = "-"
-                #imp_total = df_costos.columns.to_numpy()[3]
-                imp_total = "-"
-                imp_percepcion = df_costos.head().to_numpy()[0][3]
-                ##
-            elif "20207845044-01" in rutaPDF: ##Frutos Especies #Factura
-                folio = str(rutaPDF.split("\\")[-1].split("_")[0])
-                nro_comprobante = str(rutaPDF.split("\\")[-1].replace(f"{folio}_20207845044-01","")).replace(".pdf","")
+            elif "20207845044-01" in rutaxml: ##Frutos Especies #Factura
+                folio = str(rutaxml.split("\\")[-1].split("_")[0])
+                nro_comprobante = str(rutaxml.split("\\")[-1].replace(f"{folio}_20207845044-01","")).replace(".xml","")
                 #
                 nro_comprobante = nro_comprobante[1:]
                 #
-                cabecera_y_generales = tabula.read_pdf(rutaPDF,pages='all',multiple_tables=True,stream=True,area=(36,325,248,577))
-                #print(cabecera_y_generales[0])
-                costos = tabula.read_pdf(rutaPDF,pages='all',multiple_tables=True,stream=True,area=(245,3,811,580))
-                #print(costos[0])
                 ##
-                df_cabecera= cabecera_y_generales[0]
-                df_costos = costos[0]
-                #
-                tipo_comprobante="FACTURA"
-                fecha_emision = str(df_cabecera["R.U.C.:  20207845044"][2]).split(":")[1]
-                #print(fecha_emision)
-                #
-                doc_vinculado = ["-"]
-                try:
-                    temp_descripcion = df_costos[["DESCRIPCIÓN P.U."]].dropna(subset=["DESCRIPCIÓN P.U."]).reset_index(drop=True)
-                except:
-                    temp_descripcion = df_costos[["P.U."]].dropna(subset=["P.U."]).reset_index(drop=True)
-                temp_valor = df_costos[["VALOR"]].dropna(subset=["VALOR"]).reset_index(drop=True)
-                df_concat = pd.merge(temp_descripcion,temp_valor, left_index=True,right_index=True,how="outer")
-                try:
-                    igv= round(float(str(df_concat[df_concat["DESCRIPCIÓN P.U."]=="Base imponible:"]["VALOR"].to_numpy()[0]).replace(",","")) * 0.18 ,2)
-                except:
-                    igv= round(float(str(df_concat[df_concat["P.U."]=="Base imponible:"]["VALOR"].to_numpy()[0]).replace(",","")) * 0.18 ,2)
-                imp_total = temp_valor.iloc[-1].to_numpy()[0]
-                imp_percepcion = "-"
-                ##
-            elif "20207845044-07" in rutaPDF: ##Frutos Especies #Nota de Credito
-                folio = str(rutaPDF.split("\\")[-1].split("_")[0])
-                nro_comprobante = str(rutaPDF.split("\\")[-1].replace(f"{folio}_20207845044-07","")).replace(".pdf","")
+            elif "20207845044-07" in rutaxml: ##Frutos Especies #Nota de Credito
+                folio = str(rutaxml.split("\\")[-1].split("_")[0])
+                nro_comprobante = str(rutaxml.split("\\")[-1].replace(f"{folio}_20207845044-07","")).replace(".xml","")
                 #
                 nro_comprobante = nro_comprobante[1:]
                 #
-                datos_generales = tabula.read_pdf(rutaPDF,pages='all',multiple_tables=True,stream=True,area=(142,356,218,557))
-                #print(datos_generales[0])
-                datos_generales_2 = tabula.read_pdf(rutaPDF,pages='all',multiple_tables=True,stream=True,area=(215,24,719,570))
-                #print(datos_generales_2[0])
-                costos = tabula.read_pdf(rutaPDF,pages='all',multiple_tables=True,stream=True,area=(279,409,807,578))
-                #print(costos[0])
                 ##
-                df_generales= datos_generales[0]
-                df_costos = costos[0]
-                #
-                tipo_comprobante="NOTA DE CRÉDITO"
-                fecha_emision = str(df_generales.columns.to_numpy()[1])
-                #print(fecha_emision)
-                #
-                doc_vinculado = []
-                for df in datos_generales_2:
-                    temp = df[df["Documento que afecta la nota de Crédito:"].str.contains("Nro. de Doc",na=False)]["Documento que afecta la nota de Crédito:"].values.tolist()
-                    temp_transf = list(map(lambda x : x.split(":")[2],temp))
-                    #print(temp_transf)
-                    doc_vinculado.extend(temp_transf)
-                #
-                #print(doc_vinculado)#
-                igv = df_costos[df_costos["P.U.."].str.contains("IGV (18%):",na=False,regex=True)]["VALOR"]
-                # except:
-                #     igv = df_costos[df_costos["P.U.."].str.contains("IGV (18%):",na=False,regex=True)]["VALOR"] if df_costos[df_costos["P.U.."].str.contains("IGV (18%)",na=False)]["Unnamed: 1"].size == "0" else df_costos[df_costos["P.U.."].str.contains("IGV (18%)",na=False)]["Unnamed: 1"]
-                igv = "0.00" if igv.size == 0 else igv.values.tolist()[0]
-                
-                imp_total = df_costos[df_costos["P.U.."].str.contains("Importe Total:",na=False)]["VALOR"]
-                # except:
-                #     imp_total = df_costos[df_costos["P.U.."].str.contains("Importe Total:",na=False)]["VALOR"] if df_costos[df_costos["P.U.."].str.contains("Importe Total",na=False)]["Unnamed: 1"].size == "0" else df_costos[df_costos["P.U.."].str.contains("Importe Total",na=False)]["Unnamed: 1"]
-                imp_total = "0.00" if imp_total.size == 0 else imp_total.values.tolist()[0]
-                imp_percepcion = "-"
-                #print(imp_total)
-                ##
-            elif "20207845044-09" in rutaPDF: ##Frutos Especies #Guia de Remision Remitente Electrónica
-                folio = str(rutaPDF.split("\\")[-1].split("_")[0])
-                nro_comprobante = str(rutaPDF.split("\\")[-1].replace(f"{folio}_20207845044-09","")).replace(".pdf","")
+            elif "20207845044-09" in rutaxml: ##Frutos Especies #Guia de Remision Remitente Electrónica
+                folio = str(rutaxml.split("\\")[-1].split("_")[0])
+                nro_comprobante = str(rutaxml.split("\\")[-1].replace(f"{folio}_20207845044-09","")).replace(".xml","")
                 #
                 nro_comprobante = nro_comprobante[1:]
                 #
-                datos_generales = tabula.read_pdf(rutaPDF,pages='all',multiple_tables=True,stream=True,area=(271,361,306,559))
-                #print(datos_generales[0])
-                datos_generales_2 = tabula.read_pdf(rutaPDF,pages='all',multiple_tables=True,stream=True,area=(323,20,684,575))
-                #print(datos_generales_2[0])
                 ##
-                df_generales= datos_generales[0]
-                df_generales_2 = datos_generales_2[0]
-                #
-                tipo_comprobante="GUÍA DE REMISION REMITENTE ELECTRÓNICO"
-                fecha_emision = str(df_generales.head().to_numpy()[0][1]).replace(":","")
-                #print(fecha_emision)
-                #
-                temp_vinculado = df_generales_2[df_generales_2["DOCUMENTOS RELACIONADOS:"].str.contains("Factura",na=False)]["DOCUMENTOS RELACIONADOS:"]
-                doc_vinculado = list(map(lambda x : x.split(":")[1],temp_vinculado.to_numpy()))
-                igv= "-"
-                imp_total = "-"
-                imp_percepcion = "-"
-                #print(imp_total)
-                ##
-            elif "20205922149-01" in rutaPDF: ##P D Andina #Factura
-                folio = str(rutaPDF.split("\\")[-1].split("_")[0])
-                nro_comprobante = str(rutaPDF.split("\\")[-1].replace(f"{folio}_20205922149-01","")).replace(".pdf","")
+            elif "20205922149-01" in rutaxml: ##P D Andina #Factura
+                folio = str(rutaxml.split("\\")[-1].split("_")[0])
+                nro_comprobante = str(rutaxml.split("\\")[-1].replace(f"{folio}_20205922149-01","")).replace(".xml","")
                 #
                 nro_comprobante = nro_comprobante[1:]
                 #
-                datos_generales = tabula.read_pdf(rutaPDF,pages='all',multiple_tables=True,stream=True,area=(102,415,191,559))
-                #print(datos_generales[0])
-                costos = tabula.read_pdf(rutaPDF,pages='all',multiple_tables=True,stream=True,area=(540,398,680,584))
-                #print(costos[0])
                 ####
-                df_datos= datos_generales[0]
-                df_costos = costos[0]
-                #
-                tipo_comprobante="FACTURA"
-                fecha_emision = df_datos.columns.to_numpy()[2]
-                doc_vinculado = ["-"]
-                igv = df_costos[df_costos.iloc[0].index[2]][5]
-                imp_total = df_costos[df_costos.iloc[0].index[2]][6]
-                imp_percepcion = "-"
-                ####
-            elif "20205922149-07" in rutaPDF: ##P D Andina #Nota de Credito
-                folio = str(rutaPDF.split("\\")[-1].split("_")[0])
-                nro_comprobante = str(rutaPDF.split("\\")[-1].replace(f"{folio}_20205922149-07","")).replace(".pdf","")
+            elif "20205922149-07" in rutaxml: ##P D Andina #Nota de Credito
+                folio = str(rutaxml.split("\\")[-1].split("_")[0])
+                nro_comprobante = str(rutaxml.split("\\")[-1].replace(f"{folio}_20205922149-07","")).replace(".xml","")
                 #
                 nro_comprobante = nro_comprobante[1:]
                 #
-                datos_generales = tabula.read_pdf(rutaPDF,pages='all',multiple_tables=True,stream=True,area=(108,415,145,575))
-                #print(datos_generales[0])
-                datos_generales_2 = tabula.read_pdf(rutaPDF,pages='all',multiple_tables=True,stream=True,area=(194,13,663,588))
-                #print(datos_generales_2[0])
-                costos = tabula.read_pdf(rutaPDF,pages='all',multiple_tables=True,stream=True,area=(540,397,814,591))
-                #print(costos[0])
                 ###
-                df_datos= datos_generales[0]
-                df_datos_2= datos_generales_2[0]
-                df_costos = costos[0]
-                #
-                tipo_comprobante="NOTA DE CRÉDITO"
-                fecha_emision = df_datos.columns.to_numpy()[2]
-                temp_vinculado = df_datos_2[df_datos_2.iloc[:,1].str.contains("FACTURA",na=False)]
-                temp_vinculado_2 = temp_vinculado.iloc[:,1]
-                doc_vinculado = list(map(lambda x: x.split("-")[1]+"-"+x.split("-")[2], temp_vinculado_2.to_numpy()))
-                #print(doc_vinculado)
-                #
-                igv = df_costos[df_costos.iloc[0].index[2]][5]
-                imp_total = df_costos[df_costos.iloc[0].index[2]][6]
-                imp_percepcion = "-"
-
-                ###
-            elif "20131823020-01" in rutaPDF: ##Casa Grande #Factura
-                folio = str(rutaPDF.split("\\")[-1].split("_")[0])
-                nro_comprobante = str(rutaPDF.split("\\")[-1].replace(f"{folio}_20131823020-01","")).replace(".pdf","")
+            elif "20131823020-01" in rutaxml: ##Casa Grande #Factura
+                folio = str(rutaxml.split("\\")[-1].split("_")[0])
+                nro_comprobante = str(rutaxml.split("\\")[-1].replace(f"{folio}_20131823020-01","")).replace(".xml","")
                 #
                 nro_comprobante = nro_comprobante[1:]
                 #
-                datos_generales = tabula.read_pdf(rutaPDF,pages='all',multiple_tables=True,stream=True,area=(141,40,196,374))
-                #print(datos_generales[0])
-                costos = tabula.read_pdf(rutaPDF,pages='all',multiple_tables=True,stream=True,area=(524,409,634,558))
-                #print(costos[0])
                 ####
-                df_datos= datos_generales[0]
-                df_costos = costos[0]
-                #
-                tipo_comprobante="FACTURA"
-                fecha_emision = df_datos.columns.to_numpy()[1].split(" ")[1]
-                doc_vinculado = ["-"]
-                temp_igv = df_costos[df_costos.iloc[:,0].str.contains("I.G.V",na=False)]
-                igv = temp_igv.iloc[:,2].to_numpy()[0]
-                temp_total = df_costos[df_costos.iloc[:,0].str.contains("Importe Total",na=False)]
-                imp_total = temp_total.iloc[:,2].to_numpy()[0]
-                #print(imp_total)
-                imp_percepcion = "-"
-                ####
-            elif "20131823020-07" in rutaPDF: ##Casa Grande #Nota de Credito
-                folio = str(rutaPDF.split("\\")[-1].split("_")[0])
-                nro_comprobante = str(rutaPDF.split("\\")[-1].replace(f"{folio}_20131823020-07","")).replace(".pdf","")
+            elif "20131823020-07" in rutaxml: ##Casa Grande #Nota de Credito
+                folio = str(rutaxml.split("\\")[-1].split("_")[0])
+                nro_comprobante = str(rutaxml.split("\\")[-1].replace(f"{folio}_20131823020-07","")).replace(".xml","")
                 #
                 nro_comprobante = nro_comprobante[1:]
                 #
-                datos_generales = tabula.read_pdf(rutaPDF,pages='all',multiple_tables=True,stream=True,area=(155,41,374,199))
-                #print(datos_generales[0])
-                datos_generales_2 = tabula.read_pdf(rutaPDF,pages='all',multiple_tables=True,stream=True,area=(202,37,506,557))
-                #print(datos_generales_2[0])
-                costos = tabula.read_pdf(rutaPDF,pages='all',multiple_tables=True,stream=True,area=(508,406,585,569))
-                #print(costos[0])
                 ####
-                df_datos= datos_generales[0]
-                df_costos = costos[0]
-                #
-                tipo_comprobante="NOTA DE CRÉDITO"
-                fecha_emision = df_datos.columns.to_numpy()[0].split(" ")[4]
-                temp_vinculado = df_datos[df_datos.iloc[:,0].str.contains("F003",na=False)]
-                tmp_doc_vinculado = temp_vinculado.iloc[:,0]
-                doc_vinculado = list(map(lambda x: x.split(" ")[0], tmp_doc_vinculado.to_numpy()))
-                temp_igv = df_costos[df_costos.iloc[:,0].str.contains("I.G.V",na=False)]
-                igv = temp_igv.iloc[:,2]
-                temp_total = df_costos[df_costos.iloc[:,0].str.contains("Importe Total",na=False)]
-                imp_total = temp_total.iloc[:,2]
-                #print(imp_total)
-                imp_percepcion = "-"
-                ####
-            elif "20100166144-01" in rutaPDF: ##Agro Industria Santa Maria  #Factura
-                folio = str(rutaPDF.split("\\")[-1].split("_")[0])
-                nro_comprobante = str(rutaPDF.split("\\")[-1].replace(f"{folio}_20100166144-01","")).replace(".pdf","")
+            elif "20100166144-01" in rutaxml: ##Agro Industria Santa Maria  #Factura
+                folio = str(rutaxml.split("\\")[-1].split("_")[0])
+                nro_comprobante = str(rutaxml.split("\\")[-1].replace(f"{folio}_20100166144-01","")).replace(".xml","")
                 #
                 nro_comprobante = nro_comprobante[1:]
                 #
-                datos_generales = tabula.read_pdf(rutaPDF,pages='all',multiple_tables=True,stream=True,area=(101,21,176,290))
-                #print(datos_generales[0])
-                costos = tabula.read_pdf(rutaPDF,pages='all',multiple_tables=True,stream=True,area=(174,23,808,581))
-                #print(costos[0])
                 ####
-                df_datos= datos_generales[0]
-                df_costos = costos[0]
-                #
-                tipo_comprobante="FACTURA"
-                temp_emision = df_datos[df_datos.iloc[:,0].str.contains("Emisión",na=False)]
-                fecha_emision = temp_emision.iloc[:,1].to_numpy()[0].split(" ")[1]
-                doc_vinculado = ["-"]
-                igv = df_costos[df_costos["Precio Valor"].str.contains("IGV",na=False)]["Valor"]
-                imp_total =df_costos[df_costos["Precio Valor"].str.contains("Importe Total",na=False)]["Valor"]
-                imp_percepcion = "-"
-                ####
-            elif "20100166144-07" in rutaPDF: ##Agro Industria Santa Maria  #Nota de Credito
-                folio = str(rutaPDF.split("\\")[-1].split("_")[0])
-                nro_comprobante = str(rutaPDF.split("\\")[-1].replace(f"{folio}_20100166144-07","")).replace(".pdf","")
+            elif "20100166144-07" in rutaxml: ##Agro Industria Santa Maria  #Nota de Credito
+                folio = str(rutaxml.split("\\")[-1].split("_")[0])
+                nro_comprobante = str(rutaxml.split("\\")[-1].replace(f"{folio}_20100166144-07","")).replace(".xml","")
                 #
                 nro_comprobante = nro_comprobante[1:]
                 #
-                datos_generales = tabula.read_pdf(rutaPDF,pages='all',multiple_tables=True,stream=True,area=(99,21,176,577))
-                #print(datos_generales[0])
-                datos_generales_2 = tabula.read_pdf(rutaPDF,pages='all',multiple_tables=True,stream=True,area=(181,20,719,280))
-                #print(datos_generales_2[0])
-                costos = tabula.read_pdf(rutaPDF,pages='all',multiple_tables=True,stream=True,area=(220,20,808,581))
-                #print(costos[0])
                 ####
-                df_datos= datos_generales[0]
-                df_datos_2= datos_generales_2[0]
-                df_costos = costos[0]
-                #
-                tipo_comprobante="NOTA DE CRÉDITO"
-                fecha_emision = df_datos[df_datos["Cliente"].str.contains("Emisión",na=False)][": TERRANOVA TRADING S.A.C."].to_numpy()[0].split(" ")[1]
-                #print(df_datos_2.iloc[1].index[0])
-                temp_index = df_datos_2.index[df_datos_2[df_datos_2.iloc[1].index[0]].str.contains("Nro. Doc. Ref.",na=False)].to_list()
-                doc_vinculado=[]
-                for t in temp_index:
-                    temp_list_doc = list(map(lambda x: x.split(" ")[0],list(df_datos_2.iloc[t+1])))
-                    doc_vinculado.extend(temp_list_doc)
-                #print(doc_vinculado)
-                igv = df_costos[df_costos["Precio Valor"].str.contains("IGV",na=False)]["Unnamed: 6"]
-                imp_total =df_costos[df_costos["Precio Valor"].str.contains("Importe Total",na=False)]["Unnamed: 6"]
-                imp_percepcion = "-"
-                ####
-            elif "20100166144-40" in rutaPDF: ##Agro Industria Santa Maria  #Comprobante de Percepción
-                folio = str(rutaPDF.split("\\")[-1].split("_")[0])
-                nro_comprobante = str(rutaPDF.split("\\")[-1].replace(f"{folio}_20100166144-40","")).replace(".pdf","")
+            elif "20100166144-40" in rutaxml: ##Agro Industria Santa Maria  #Comprobante de Percepción
+                folio = str(rutaxml.split("\\")[-1].split("_")[0])
+                nro_comprobante = str(rutaxml.split("\\")[-1].replace(f"{folio}_20100166144-40","")).replace(".xml","")
                 #
                 nro_comprobante = nro_comprobante[1:]
                 #
-                datos_generales = tabula.read_pdf(rutaPDF,pages='all',multiple_tables=True,stream=True,area=(114,20,168,576))
-                #print(datos_generales[0])
-                costos = tabula.read_pdf(rutaPDF,pages='all',multiple_tables=True,stream=True,area=(167,21,806,580))
-                #print(costos[0])
                 ####
-                df_datos= datos_generales[0]
-                df_costos = costos[0]
-                #
-                tipo_comprobante="COMPROBANTE DE PERCEPCIÓN"
-                fecha_emision = df_datos[df_datos["Señor(es)"].str.contains("Emisión",na=False)][": TERRANOVA TRADING S.A.C."].to_numpy()[0].split(" ")[1]
-                temp_doc = df_costos[df_costos["Unnamed: 0"]=="FACTURA"]["Comprobante de pago que da Origen a la Percepción"].to_numpy()
-                doc_vinculado= list(map(lambda x: x.split(" ")[0],temp_doc))
-                imp_percepcion = df_costos[df_costos["Unnamed: 6"].str.contains("Percibido",na=False)]["Importe"].values.tolist()[0]
-                #imp_total =df_costos[df_costos["Unnamed: 6"].str.contains("Cobrado",na=False)]["Importe"].values.tolist()[0]
-                imp_total = "-"
-                igv = "-"
-                ####
-            elif "20100052050-01" in rutaPDF: ##PeruFarma  #Factura
-                folio = str(rutaPDF.split("\\")[-1].split("_")[0])
-                nro_comprobante = str(rutaPDF.split("\\")[-1].replace(f"{folio}_20100052050-01","")).replace(".pdf","")
+            elif "20100052050-01" in rutaxml: ##PeruFarma  #Factura
+                folio = str(rutaxml.split("\\")[-1].split("_")[0])
+                nro_comprobante = str(rutaxml.split("\\")[-1].replace(f"{folio}_20100052050-01","")).replace(".xml","")
                 #
                 nro_comprobante = nro_comprobante[1:]
                 #
-                datos_generales = tabula.read_pdf(rutaPDF,pages='all',multiple_tables=True,stream=True,area=(147,20,185,809))
-                #print(datos_generales[0])
-                costos = tabula.read_pdf(rutaPDF,pages='all',multiple_tables=True,stream=True,area=(198,514,781,819))
-                #print(costos[0])
                 ####
-                df_datos= datos_generales[0]
-                df_costos = costos[0]
-                #
-                tipo_comprobante="FACTURA"
-                fecha_emision = df_datos.columns.to_numpy()[1]
-                doc_vinculado= ["-"]
-                imp_percepcion ="-"
-                imp_total =df_costos[df_costos[df_costos.iloc[1].index[0]].str.contains("Importe Total",na=False)]["Precio Venta"].values.tolist()[0]
-                igv = df_costos[df_costos[df_costos.iloc[1].index[0]].str.contains("IGV",na=False)]["Precio Venta"].values.tolist()[0]
-                ####
-            elif "20100052050-09" in rutaPDF: ##PeruFarma  #Guia de Remision
-                folio = str(rutaPDF.split("\\")[-1].split("_")[0])
-                nro_comprobante = str(rutaPDF.split("\\")[-1].replace(f"{folio}_20100052050-09","")).replace(".pdf","")
+            elif "20100052050-09" in rutaxml: ##PeruFarma  #Guia de Remision
+                folio = str(rutaxml.split("\\")[-1].split("_")[0])
+                nro_comprobante = str(rutaxml.split("\\")[-1].replace(f"{folio}_20100052050-09","")).replace(".xml","")
                 #
                 nro_comprobante = nro_comprobante[1:]
                 #
-                datos_generales = tabula.read_pdf(rutaPDF,pages='all',multiple_tables=True,stream=True,area=(140,22,216,574))
-                #print(datos_generales[0])
-                datos_generales_2 = tabula.read_pdf(rutaPDF,pages='all',multiple_tables=True,stream=True,area=(342,22,421,574))
-                #print(datos_generales_2[0])
                 ####
-                df_datos= datos_generales[0]
-                df_datos_2= datos_generales_2[0]
-                #
-                tipo_comprobante="GUIA DE REMISIÓN ELECTRÓNICA"
-                fecha_emision = df_datos[df_datos["Unnamed: 0"].str.contains("Emisión")]["Unnamed: 0"].to_numpy()[0].split(":")[1]
-                temp_doc= df_datos_2[df_datos_2["Unnamed: 0"].str.contains("Factura",na=False)]["Unnamed: 1"].to_numpy()
-                doc_vinculado = list(map(lambda x:x.split(":")[1], temp_doc))
-                imp_percepcion ="-"
-                imp_total ="-"
-                igv = "-"
-                ####
-            elif "20100052050-07" in rutaPDF: ##PeruFarma  #Notas de Credito
-                folio = str(rutaPDF.split("\\")[-1].split("_")[0])
-                nro_comprobante = str(rutaPDF.split("\\")[-1].replace(f"{folio}_20100052050-07","")).replace(".pdf","")
+            elif "20100052050-07" in rutaxml: ##PeruFarma  #Notas de Credito
+                folio = str(rutaxml.split("\\")[-1].split("_")[0])
+                nro_comprobante = str(rutaxml.split("\\")[-1].replace(f"{folio}_20100052050-07","")).replace(".xml","")
                 #
                 nro_comprobante = nro_comprobante[1:]
                 #
-                datos_generales = tabula.read_pdf(rutaPDF,pages='all',multiple_tables=True,stream=True,area=(144,20,172,576))
-                #print(datos_generales[0])
-                datos_generales_2 = tabula.read_pdf(rutaPDF,pages='all',multiple_tables=True,stream=True,area=(432,22,764,382))
-                #print(datos_generales_2[0])
-                costos = tabula.read_pdf(rutaPDF,pages='all',multiple_tables=True,stream=True,area=(288,516,764,815))
-                #print(costos[0])
                 ####
-                df_datos= datos_generales[0]
-                df_datos_2= datos_generales_2[0]
-                df_costos=costos[0]
-                #
-                tipo_comprobante="NOTA DE CRÉDITO"
-                fecha_emision = df_datos.columns.to_numpy()[1]
-                temp_doc= df_datos_2[df_datos_2["Tipo Documento Serie y Número"].str.contains("FACTURA",na=False)]["Tipo Documento Serie y Número"].to_numpy()
-                doc_vinculado = list(map(lambda x : x.split(" ")[1], temp_doc))
-                imp_percepcion ="-"
-                imp_total =df_costos[df_costos["Total Valor de Venta - Operaciones Gravadas:"].str.contains("Total a pagar",na=False)][df_costos.iloc[0].index[2]].to_numpy()[0]
-                igv = df_costos[df_costos["Total Valor de Venta - Operaciones Gravadas:"].str.contains("IGV",na=False)][df_costos.iloc[0].index[2]].to_numpy()[0]
-                ####
-            elif "20100190797-01" in rutaPDF: ##Leche Gloria  #Factura
-                folio = str(rutaPDF.split("\\")[-1].split("_")[0])
-                nro_comprobante = str(rutaPDF.split("\\")[-1].replace(f"{folio}_20100190797-01","")).replace(".pdf","")
+            elif "20100190797-01" in rutaxml: ##Leche Gloria  #Factura
+                folio = str(rutaxml.split("\\")[-1].split("_")[0])
+                nro_comprobante = str(rutaxml.split("\\")[-1].replace(f"{folio}_20100190797-01","")).replace(".xml","")
                 #
                 nro_comprobante = nro_comprobante[1:]
                 #
-                datos_generales = tabula.read_pdf(rutaPDF,pages='all',multiple_tables=True,stream=True,area=(142,39,189,554))
-                #print(datos_generales[0])
-                costos = tabula.read_pdf(rutaPDF,pages='all',multiple_tables=True,stream=True,area=(407,401,600,575))
-                #print(costos[0])
-                ####
-                df_datos= datos_generales[0]
-                df_costos = costos[0]
                 #
-                tipo_comprobante="FACTURA"
-                fecha_emision = df_datos.columns.to_numpy()[1].split(" ")[1]
-                doc_vinculado= ["-"]
-                imp_percepcion =df_costos[df_costos[df_costos.iloc[0].index[0]].str.contains("Percepción",na=False)][df_costos.iloc[0].index[2]].to_numpy()[0]
-                #imp_total =df_costos[df_costos[df_costos.iloc[0].index[0]].str.contains("MontoTotal",na=False)][df_costos.iloc[0].index[2]].to_numpy()[0]
-                igv = df_costos[df_costos[df_costos.iloc[0].index[0]].str.contains("IGV",na=False)][df_costos.iloc[0].index[2]].to_numpy()[0]
-                ####
-                # if str(imp_total) == "0.0" or str(imp_total) == "0.00":
-                #     imp_total = df_costos[df_costos[df_costos.iloc[0].index[0]].str.contains("Importe Total",na=False)][df_costos.iloc[0].index[2]].to_numpy()[0]
                 
-                imp_total = df_costos[df_costos[df_costos.iloc[0].index[0]].str.contains("Importe Total",na=False)][df_costos.iloc[0].index[2]].to_numpy()[0]
-                
-            elif "20100190797-09" in rutaPDF: ##Leche Gloria  #Guia de Remision
-                folio = str(rutaPDF.split("\\")[-1].split("_")[0])
-                nro_comprobante = str(rutaPDF.split("\\")[-1].replace(f"{folio}_20100190797-09","")).replace(".pdf","")
+            elif "20100190797-09" in rutaxml: ##Leche Gloria  #Guia de Remision
+                folio = str(rutaxml.split("\\")[-1].split("_")[0])
+                nro_comprobante = str(rutaxml.split("\\")[-1].replace(f"{folio}_20100190797-09","")).replace(".xml","")
                 #
                 nro_comprobante = nro_comprobante[1:]
                 #
-                datos_generales = tabula.read_pdf(rutaPDF,pages='all',multiple_tables=True,stream=True,area=(142,39,188,554))
-                #print(datos_generales[0])
                 ####
-                df_datos= datos_generales[0]
-                #
-                tipo_comprobante="GUIA DE REMISIÓN ELECTRÓNICA"
-                fecha_emision = df_datos.columns.to_numpy()[1].split(" ")[1]
-                doc_vinculado= df_datos.columns.to_numpy()[7].split(" ")[2]
-                imp_percepcion ="-"
-                imp_total ="-"
-                igv = "-"
-                ####
-            elif "20100190797-07" in rutaPDF: ##Leche Gloria  #Notas de Crédito
-                folio = str(rutaPDF.split("\\")[-1].split("_")[0])
-                nro_comprobante = str(rutaPDF.split("\\")[-1].replace(f"{folio}_20100190797-07","")).replace(".pdf","")
+            elif "20100190797-07" in rutaxml: ##Leche Gloria  #Notas de Crédito
+                folio = str(rutaxml.split("\\")[-1].split("_")[0])
+                nro_comprobante = str(rutaxml.split("\\")[-1].replace(f"{folio}_20100190797-07","")).replace(".xml","")
                 #
                 nro_comprobante = nro_comprobante[1:]
                 #
-                datos_generales = tabula.read_pdf(rutaPDF,pages='all',multiple_tables=True,stream=True,area=(154,40,204,374))
-                #print(datos_generales[0])
-                datos_generales_2 = tabula.read_pdf(rutaPDF,pages='all',multiple_tables=True,stream=True,area=(500,179,709,386))
-                #print(datos_generales_2[0])
-                costos = tabula.read_pdf(rutaPDF,pages='all',multiple_tables=True,stream=True,area=(542,402,800,580))
-                #print(costos[0])
-                ###
-                df_datos = datos_generales[0]
-                df_datos_2 = datos_generales_2[0]
-                df_costos = costos[0]
-                ###
-                tipo_comprobante="NOTA DE CRÉDITO"
-                fecha_emision = df_datos.columns.to_numpy()[1].split(" ")[1]
-                
-                try:
-                    temp_doc= df_datos_2[df_datos_2[df_datos_2.iloc[0].index[1]].str.contains("Factura",na=False)][df_datos_2.iloc[0].index[1]].to_numpy()
-                except:
-                    temp_doc= df_datos_2[df_datos_2[df_datos_2.iloc[0].index[0]].str.contains("Factura",na=False)][df_datos_2.iloc[0].index[0]].to_numpy()
-                        
-                doc_vinculado = list(map(lambda x: x.split(" ")[2],temp_doc))
-                
-                try: 
-                    imp_percepcion =df_costos[df_costos[df_costos.iloc[0].index[0]].str.contains("Percepción",na=False)][df_costos.iloc[0].index[2]].to_numpy()[0]
-                except:
-                    imp_percepcion =df_costos[df_costos[df_costos.iloc[0].index[1]].str.contains("Percepción",na=False)][df_costos.iloc[0].index[3]].to_numpy()[0]
-                
-                # try:
-                #     imp_total =df_costos[df_costos[df_costos.iloc[0].index[0]].str.contains("MontoTotal",na=False)][df_costos.iloc[0].index[2]].to_numpy()[0]
-                # except:
-                #     imp_total =df_costos[df_costos[df_costos.iloc[0].index[1]].str.contains("MontoTotal",na=False)][df_costos.iloc[0].index[3]].to_numpy()[0]
-                
-                try:
-                    igv = df_costos[df_costos[df_costos.iloc[0].index[0]].str.contains("IGV",na=False)][df_costos.iloc[0].index[2]].to_numpy()[0]
-                except:
-                    igv = df_costos[df_costos[df_costos.iloc[0].index[1]].str.contains("IGV",na=False)][df_costos.iloc[0].index[3]].to_numpy()[0]
-                ####
-                #if "0.0" == str(imp_total) or "0.00" == str(imp_total):
-                try:
-                    imp_total =df_costos[df_costos[df_costos.iloc[0].index[0]].str.contains("Importe Total",na=False)][df_costos.iloc[0].index[2]].to_numpy()[0]
-                except:
-                    imp_total =df_costos[df_costos[df_costos.iloc[0].index[1]].str.contains("Importe Total",na=False)][df_costos.iloc[0].index[3]].to_numpy()[0]
+                #
             
-            elif "20100190797-08" in rutaPDF: ##Leche Gloria #Notas de debito
-                folio = str(rutaPDF.split("\\")[-1].split("_")[0])
-                nro_comprobante = str(rutaPDF.split("\\")[-1].replace(f"{folio}_20100190797-08","")).replace(".pdf","")
+            elif "20100190797-08" in rutaxml: ##Leche Gloria #Notas de debito
+                folio = str(rutaxml.split("\\")[-1].split("_")[0])
+                nro_comprobante = str(rutaxml.split("\\")[-1].replace(f"{folio}_20100190797-08","")).replace(".xml","")
                 #
                 nro_comprobante = nro_comprobante[1:]
                 #
-                datos_generales = tabula.read_pdf(rutaPDF,pages='all',multiple_tables=True,stream=True,area=(154,39,204,374))
-                #print(datos_generales[0])
-                datos_generales_2 = tabula.read_pdf(rutaPDF,pages='all',multiple_tables=True,stream=True,area=(507,180,709,384))
-                #print(datos_generales_2[0])
-                costos = tabula.read_pdf(rutaPDF,pages='all',multiple_tables=True,stream=True,area=(547,405,670,569))
-                #print(costos[0])
-                ###
-                df_datos = datos_generales[0]
-                df_datos_2 = datos_generales_2[0]
-                df_costos = costos[0]
-                ###
-                tipo_comprobante="NOTA DE DÉBITO"
-                fecha_emision = df_datos.columns.to_numpy()[1].split(" ")[1]
-                temp_doc= df_datos_2[df_datos_2["Unnamed: 0"].str.contains("Factura",na=False)]["Unnamed: 0"].to_numpy()
-                doc_vinculado = list(map(lambda x: x.split(" ")[2],temp_doc))
-                imp_percepcion =df_costos[df_costos[df_costos.iloc[1].index[0]].str.contains("Percepción",na=False)][df_costos.iloc[1].index[2]].to_numpy()[0]
-                #imp_total =df_costos[df_costos[df_costos.iloc[1].index[0]].str.contains("MontoTotal",na=False)][df_costos.iloc[1].index[2]].to_numpy()[0]
-                igv = df_costos[df_costos[df_costos.iloc[1].index[0]].str.contains("IGV",na=False)][df_costos.iloc[1].index[2]].to_numpy()[0]
-                ####
-                #if "0.0" == str(imp_total) or "0.00" == str(imp_total):
-                imp_total = df_costos[df_costos[df_costos.iloc[1].index[0]].str.contains("Importe Total",na=False)][df_costos.iloc[1].index[2]].to_numpy()[0]
+                #
                 
-            elif "20100035121_01" in rutaPDF: ##Molitalia  #Factura
-                folio = str(rutaPDF.split("\\")[-1].split("_")[0])
-                nro_comprobante = str(rutaPDF.split("\\")[-1].replace(f"{folio}_20100035121_01","")).replace(".pdf","")
+            elif "20100035121_01" in rutaxml: ##Molitalia  #Factura
+                folio = str(rutaxml.split("\\")[-1].split("_")[0])
+                nro_comprobante = str(rutaxml.split("\\")[-1].replace(f"{folio}_20100035121_01","")).replace(".xml","")
                 #
                 temp_nro_comprobante = nro_comprobante.split("_")[1].split("-")
                 rest = 8-len(temp_nro_comprobante[1])
                 ceros = ''.join(str("0") for val in range(rest))
                 nro_comprobante = f"{temp_nro_comprobante[0]}-{ceros}{temp_nro_comprobante[1]}"  
                 #
-                datos_generales = tabula.read_pdf(rutaPDF,pages='all',multiple_tables=True,stream=True,area=(173,495,244,577))
-                #print(datos_generales[0])
-                costos = tabula.read_pdf(rutaPDF,pages='all',multiple_tables=True,stream=True,area=(575,19,612,583))
-                #print(costos[0])
                 ####
-                df_datos= datos_generales[0]
-                df_costos = costos[0]
-                #
-                tipo_comprobante="FACTURA"
-                fecha_emision = df_datos["Fecha Emisión"][0]
-                doc_vinculado= ["-"]
-                imp_percepcion = "-"
-                imp_total = df_costos["Importe Total"][0]
-                igv = df_costos["I.G.V."][0]
-                ####
-            elif "20100035121_07" in rutaPDF: ##Molitalia #Notas de Crédito
-                folio = str(rutaPDF.split("\\")[-1].split("_")[0])
-                nro_comprobante = str(rutaPDF.split("\\")[-1].replace(f"{folio}_20100035121_07","")).replace(".pdf","")
-                #
-                temp_nro_comprobante = nro_comprobante.split("_")[1].split("-")
-                rest = 8-len(temp_nro_comprobante[1])
-                ceros = ''.join(str("0") for val in range(rest))
-                nro_comprobante = f"{temp_nro_comprobante[0]}-{ceros}{temp_nro_comprobante[1]}"  
-                #
-                datos_generales = tabula.read_pdf(rutaPDF,pages='all',multiple_tables=True,stream=True,area=(195,20,228,576))
-                #print(datos_generales[0])
-                costos = tabula.read_pdf(rutaPDF,pages='all',multiple_tables=True,stream=True,area=(575,19,612,583))
-                #print(costos[0])
-                ####
-                df_datos= datos_generales[0]
-                df_costos = costos[0]
-                #
-                tipo_comprobante="NOTAS DE CRÉDITO"
-                fecha_emision = df_datos["Fecha Emisión"][0]
-                doc_vinculado= df_datos["Doc. Referencia"].to_numpy()
-                imp_percepcion = "-"
-                imp_total = df_costos["Importe Total"][0]
-                igv = df_costos["I.G.V."][0]
-                ####
-            elif "20100152941_08" in rutaPDF: ##Kimberly #Nota de Debito
-                folio = str(rutaPDF.split("\\")[-1].split("_")[0])
-                nro_comprobante = str(rutaPDF.split("\\")[-1].replace(f"{folio}_20100152941_08","")).replace(".pdf","")
-                #
-                temp_nro_comprobante = nro_comprobante.split("_")[1].split("-")
-                rest = 8-len(temp_nro_comprobante[1])
-                ceros = ''.join(str("0") for val in range(rest))
-                nro_comprobante = f"{temp_nro_comprobante[0]}-{ceros}{temp_nro_comprobante[1]}"  
-                #
-                datos_generales = tabula.read_pdf(rutaPDF,pages='all',multiple_tables=True,stream=True,area=(109,362,171,575))
-                #print(datos_generales[0])
-                datos_generales_2 = tabula.read_pdf(rutaPDF,pages='all',multiple_tables=True,stream=True,area=(278,20,322,306))
-                #print(datos_generales_2[0])
-                costos = tabula.read_pdf(rutaPDF,pages='all',multiple_tables=True,stream=True,area=(640,359,732,576))
-                #print(costos[0])
-                ####
-                df_datos= datos_generales[0]
-                df_datos_2= datos_generales_2[0]
-                df_costos = costos[0]
-                #
-                tipo_comprobante="NOTAS DE DÉBITO"
-                fecha_emision = df_datos["Fecha de Vencimiento"][2]
+            elif "20100035121_07" in rutaxml: ##Molitalia #Notas de Crédito
+                folio = str(rutaxml.split("\\")[-1].split("_")[0])
+                nro_comprobante = root.find('cbc:ID',ns).text
+                tipo_comprobante="NOTA DE CRÉDITO"
+                fecha_emision = root.find('cbc:IssueDate', ns).text
+                moneda_actual = root.find('cac:TaxTotal', ns).find('cbc:TaxAmount', ns).attrib["currencyID"]
                 doc_vinculado = []
-                doc_vinculado.append(df_datos_2.columns.to_numpy()[2].split(" - ")[1])
-                imp_percepcion = "-"
-                imp_total = df_costos[df_costos[df_costos.iloc[1].index[0]].str.contains("IMPORTE TOTAL",na=False)][df_costos.iloc[1].index[2]].to_numpy()[0]
-                igv = df_costos[df_costos[df_costos.iloc[1].index[0]].str.contains("IGV",na=False)][df_costos.iloc[1].index[2]].to_numpy()[0]
+                temp_doc = root.find('cac:BillingReference', ns).find('cac:InvoiceDocumentReference', ns).find('cbc:ID', ns).text
+                doc_vinculado.append(temp_doc)
+                fecha_vinculado = []
+                temp_date = root.find('cac:BillingReference', ns).find('cac:InvoiceDocumentReference', ns).find('cbc:IssueDate', ns).text
+                fecha_vinculado.append(temp_date)
+                
+                # for item in root.findall('cac:BillingReference', ns):
+                #     temp = item.find('cac:InvoiceDocumentReference', ns).findall('cbc:ID', ns).text
+                #     temp_date = item.find('cac:InvoiceDocumentReference', ns).findall('cbc:IssueDate', ns).text
+                #     doc_vinculado.append(temp)
+                #     fecha_vinculado.append(temp_date)
+                    
+                motivo = ""
+                for i in root[0][1][0][0]:
+                    if i.attrib["name"] == "MotivoRefe":
+                        motivo = i.text
+                        
+                imp_total = root.find('cac:LegalMonetaryTotal', ns).find('cbc:PayableAmount', ns).text
+                ##
+                count = 0
+                for item in root.findall('cac:CreditNoteLine', ns):    
+                    if count == 1:
+                        break
+                    else:    
+                        descripcion = item.find('cac:Item', ns).findall('cbc:Description', ns)[0].text
+                        precio_u = item.find('cac:Item', ns).findall('cbc:Description', ns)[2].text
+                        item_u = "1"
+                        count = count +1
+                ##
                 ####
-            elif "20100152941_01" in rutaPDF: ##Kimberly  #Factura
-                folio = str(rutaPDF.split("\\")[-1].split("_")[0])
-                nro_comprobante = str(rutaPDF.split("\\")[-1].replace(f"{folio}_20100152941_01","")).replace(".pdf","")
+            elif "20100152941_08" in rutaxml: ##Kimberly #Nota de Debito
+                folio = str(rutaxml.split("\\")[-1].split("_")[0])
+                nro_comprobante = str(rutaxml.split("\\")[-1].replace(f"{folio}_20100152941_08","")).replace(".xml","")
                 #
                 temp_nro_comprobante = nro_comprobante.split("_")[1].split("-")
                 rest = 8-len(temp_nro_comprobante[1])
                 ceros = ''.join(str("0") for val in range(rest))
                 nro_comprobante = f"{temp_nro_comprobante[0]}-{ceros}{temp_nro_comprobante[1]}"  
                 #
-                datos_generales = tabula.read_pdf(rutaPDF,pages='all',multiple_tables=True,stream=True,area=(108,359,162,574))
-                #print(datos_generales[0])
-                costos = tabula.read_pdf(rutaPDF,pages='all',multiple_tables=True,stream=True,area=(638,369,728,576))
-                #print(costos[0])
                 ####
-                df_datos= datos_generales[0]
-                df_costos = costos[0]
-                #
-                tipo_comprobante="FACTURA"
-                fecha_emision = df_datos["Fecha de Vencimiento"][2]
-                doc_vinculado = ["-"]
-                imp_percepcion = "-"
-                imp_total = df_costos[df_costos[df_costos.iloc[1].index[0]].str.contains("IMPORTE TOTAL",na=False)][df_costos.iloc[1].index[2]].to_numpy()[0]
-                igv = df_costos[df_costos[df_costos.iloc[1].index[0]].str.contains("IGV",na=False)][df_costos.iloc[1].index[2]].to_numpy()[0]
-                ####
-            elif "20100152941_07" in rutaPDF: ##Kimberly #Notas de Crédito
-                folio = str(rutaPDF.split("\\")[-1].split("_")[0])
-                nro_comprobante = str(rutaPDF.split("\\")[-1].replace(f"{folio}_20100152941_07","")).replace(".pdf","")
+            elif "20100152941_01" in rutaxml: ##Kimberly  #Factura
+                folio = str(rutaxml.split("\\")[-1].split("_")[0])
+                nro_comprobante = str(rutaxml.split("\\")[-1].replace(f"{folio}_20100152941_01","")).replace(".xml","")
                 #
                 temp_nro_comprobante = nro_comprobante.split("_")[1].split("-")
                 rest = 8-len(temp_nro_comprobante[1])
                 ceros = ''.join(str("0") for val in range(rest))
                 nro_comprobante = f"{temp_nro_comprobante[0]}-{ceros}{temp_nro_comprobante[1]}"  
                 #
-                datos_generales = tabula.read_pdf(rutaPDF,pages='all',multiple_tables=True,stream=True,area=(109,360,171,557))
-                #print(datos_generales[0])
-                datos_generales_2 = tabula.read_pdf(rutaPDF,pages='all',multiple_tables=True,stream=True,area=(278,19,325,306))
-                #print(datos_generales_2[0])
-                costos = tabula.read_pdf(rutaPDF,pages='all',multiple_tables=True,stream=True,area=(643,358,729,580))
-                #print(costos[0])
                 ####
-                df_datos= datos_generales[0]
-                df_datos_2= datos_generales_2[0]
-                df_costos = costos[0]
+            elif "20100152941_07" in rutaxml: ##Kimberly #Notas de Crédito
+                folio = str(rutaxml.split("\\")[-1].split("_")[0])
+                nro_comprobante = str(rutaxml.split("\\")[-1].replace(f"{folio}_20100152941_07","")).replace(".xml","")
                 #
-                tipo_comprobante="NOTAS DE CRÉDITO"
-                fecha_emision = df_datos["Fecha de Vencimiento"][2]
-                doc_vinculado = []
-                doc_vinculado.append(df_datos_2.columns.to_numpy()[2].split(" - ")[1])
-                imp_percepcion = "-"
-                imp_total = df_costos[df_costos[df_costos.iloc[1].index[0]].str.contains("IMPORTE TOTAL",na=False)][df_costos.iloc[1].index[2]].to_numpy()[0]
-                igv = df_costos[df_costos[df_costos.iloc[1].index[0]].str.contains("IGV",na=False)][df_costos.iloc[1].index[2]].to_numpy()[0]
+                temp_nro_comprobante = nro_comprobante.split("_")[1].split("-")
+                rest = 8-len(temp_nro_comprobante[1])
+                ceros = ''.join(str("0") for val in range(rest))
+                nro_comprobante = f"{temp_nro_comprobante[0]}-{ceros}{temp_nro_comprobante[1]}"  
+                #
                 ####
             else:
                 folio = "-"
                 nro_comprobante = ""
                 tipo_comprobante="-"
                 fecha_emision = "-"
+                moneda_actual ="-"
                 doc_vinculado =["-"]
-                imp_percepcion = "-"
+                fecha_vinculado=["-"]
+                motivo ="-"
                 imp_total = "-"
-                igv = "-"
+                descripcion = "-"
+                precio_u = "-"
+                item_u = "-"
                 
             ##### Cargando datos en un diccionario
             pre_data = {}
@@ -894,20 +463,22 @@ class EmailAttachment:
             pre_data["ruc"] = self.proveedor["ruc"]
             pre_data["razon_social"] = self.proveedor["razon_social"]
             pre_data["tipo_comprobante"] = tipo_comprobante
-            pre_data["fecha_emision"] = doc_vinculado
             pre_data["fecha_emision"] = fecha_emision
             pre_data["doc_vinculado"] = doc_vinculado
-            pre_data["igv"] = igv
+            pre_data["moneda_actual"] = moneda_actual
             pre_data["imp_total"] = imp_total
-            pre_data["imp_percepcion"] = imp_percepcion
-            pre_data["comprobante"] = imp_percepcion
+            pre_data["fecha_vinculado"] = fecha_vinculado
+            pre_data["motivo"] = motivo
             pre_data["nro_comprobante"] = nro_comprobante
-            
+            pre_data["descripcion"] = descripcion
+            pre_data["precio_u"] = precio_u
+            pre_data["item_u"] = item_u
+            ##
             ### Cargando datos al lista principal
             data_temp.append(pre_data)
             return data_temp
         except Exception as e:
-            print(f"--- ERROR - LECTURA DE PDF: {rutaPDF} ",e)
+            print(f"--- ERROR - LECTURA DE PDF: {rutaxml} ",e)
             return []
         
         
